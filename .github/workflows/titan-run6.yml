@@ -1,0 +1,60 @@
+name: name: titan-run
+on:
+  schedule:
+    - cron: "30 17 * * 1-5"   # 17:30 UTC = 18:30 in inverno / 19:30 in estate, dopo la chiusura di Borsa Italiana
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas numpy cryptography pypdf
+      - name: Disattiva il vecchio workflow (evita doppioni)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow disable daily.yml || true
+      - name: Ripristina l'ultimo dato valido
+        uses: actions/cache@v4
+        with:
+          path: cache/data.json
+          key: data-${{ github.run_id }}
+          restore-keys: data-
+      - name: Esegui la versione piu recente di Titan
+        env:
+          TITAN_PIN: ${{ secrets.TITAN_PIN }}
+        run: |
+          python - <<'PY'
+          import glob, re, subprocess, sys
+          best = None
+          for f in glob.glob("titan*.py"):
+              m = re.search(r'^VERSION = "([^"]+)"', open(f, encoding="utf-8", errors="ignore").read(5000), re.M)
+              v = m.group(1) if m else "0"
+              if best is None or v > best[0]:
+                  best = (v, f)
+          print("File scelto:", best)
+          sys.exit(subprocess.call([sys.executable, best[1]]))
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
